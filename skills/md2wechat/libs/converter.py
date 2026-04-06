@@ -16,6 +16,10 @@ def _escape_html(text: str) -> str:
     """Escape HTML special characters."""
     return html.escape(text)
 
+def _escape_html_text(text: str) -> str:
+    """Escape HTML text-node chars, but keep quotes/apostrophes unchanged."""
+    return html.escape(text, quote=False)
+
 
 @dataclass
 class StyleConfig:
@@ -328,8 +332,8 @@ class CodeBlockFormatter:
             else:
                 content = line
 
-            # Escape HTML
-            content = _escape_html(content)
+            # Escape HTML for text node (keep quotes for better WeChat rendering in code blocks)
+            content = _escape_html_text(content)
             # Replace spaces with &nbsp; for preservation
             content = content.replace('    ', '&nbsp;&nbsp;&nbsp;&nbsp;')
             content = content.replace('  ', '&nbsp;&nbsp;')
@@ -480,6 +484,7 @@ class MarkdownToWeChatConverter:
         in_code = False
         code_lang = ""
         buf_code = []
+        in_html_comment = False
 
         preface = []
         parabuf = []
@@ -523,6 +528,26 @@ class MarkdownToWeChatConverter:
                 buf_code.append(line)
                 i += 1
                 continue
+
+            # HTML comments should be ignored in rendered article content.
+            # Handle both one-line and multi-line comment blocks.
+            if in_html_comment:
+                if "-->" in line:
+                    in_html_comment = False
+                i += 1
+                continue
+
+            if "<!--" in line:
+                comment_start = line.find("<!--")
+                comment_end = line.find("-->", comment_start + 4)
+                if comment_end == -1:
+                    # Keep any visible prefix before the comment marker, then
+                    # enter comment mode for following lines.
+                    line = line[:comment_start]
+                    in_html_comment = True
+                else:
+                    # Remove inline HTML comment and keep remaining visible text.
+                    line = line[:comment_start] + line[comment_end + 3:]
 
             stripped_line = line.strip()
 
@@ -1062,6 +1087,9 @@ class MarkdownToWeChatConverter:
         text = re.sub(r'\\([\#\*\_\[\]\(\)\`\\])', r'\1', text)
         # Handle HTML entities like &#x20; (space), &#x27; (')
         text = html.unescape(text)
+        # Strip legacy <font ...> wrappers from source markdown/html exports.
+        # Keep inner text and let theme styles handle final appearance.
+        text = re.sub(r'</?font\b[^>]*>', '', text, flags=re.IGNORECASE)
 
         # Escape HTML first
         text = _escape_html(text)
@@ -1083,8 +1111,18 @@ class MarkdownToWeChatConverter:
 
         def code_replace(match):
             code = match.group(1)
-            return f'<code style="background-color:{inline_code_bg};padding:2px 6px;border-radius:3px;font-family:SF Mono,Monaco,monospace;font-size:0.9em;color:{inline_code_color};font-weight:500;">{code}</code>'
-        text = re.sub(r'`([^`]+)`', code_replace, text)
+            trailing_punct = match.group(2) or ""
+            # Use span instead of code to avoid WeChat default code-tag overrides
+            # that may force unexpected line breaks in list items.
+            display_text = f"{code}{trailing_punct}"
+            code_span = (
+                f'<span style="display:inline;line-height:inherit;vertical-align:baseline;'
+                f'background-color:{inline_code_bg};padding:1px 4px;border-radius:3px;'
+                f'font-family:SF Mono,Monaco,monospace;font-size:0.9em;'
+                f'color:{inline_code_color};font-weight:500;">{display_text}</span>'
+            )
+            return code_span
+        text = re.sub(r'`([^`]+)`([：:])?', code_replace, text)
 
         # Links: [text](url)
         # Use link color from config with underline on hover effect (static)
