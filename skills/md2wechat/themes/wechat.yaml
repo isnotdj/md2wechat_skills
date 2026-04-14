@@ -36,7 +36,7 @@ blockquote:
   text_color: "#1F6B46"
 table:
   header_bg_color: "#DFF6EA"
-  border_color: "#DFF6EA"
+  border_color: "#e6e6e6"
 link:
   color: "#05A851"
 meta:

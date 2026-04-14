@@ -32,6 +32,7 @@ class StyleConfig:
     code_bg_color: str = "#F8F9FA"
     code_border_color: str = "#E9ECEF"
     code_text_color: str = "#212529"
+    code_pygments_style: str = "material"
     inline_code_bg_color: str = "#F1F3F5"
     inline_code_text_color: str = "#E83E8C"
     paragraph_font_size: str = "13px"
@@ -58,7 +59,7 @@ class ThemeRegistry:
         "h2_h3_card": {"bg_color", "border_color"},
         "h2_title": {"line_color", "text_color", "font_size"},
         "h3_title": {"bg_color", "border_color", "text_color", "font_size"},
-        "code": {"bg_color", "border_color", "text_color"},
+        "code": {"bg_color", "border_color", "text_color", "pygments_style"},
         "inline_code": {"bg_color", "text_color"},
         "paragraph": {"font_size", "line_height", "color"},
         "blockquote": {"bg_color", "border_color", "text_color"},
