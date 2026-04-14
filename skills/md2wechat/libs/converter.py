@@ -12,6 +12,7 @@ import html
 
 from pygments import lex
 from pygments.lexers import get_lexer_by_name
+from pygments.styles import get_style_by_name
 from pygments.token import Token
 from pygments.util import ClassNotFound
 
@@ -122,6 +123,13 @@ class MarkdownParser:
 class CodeBlockFormatter:
     """Format code blocks for WeChat."""
 
+    DEFAULT_PYGMENTS_STYLE = "material"
+    GITHUB_DARK_BG = "#0d1117"
+    GITHUB_DARK_HEADER_BG = "#161b22"
+    GITHUB_DARK_BORDER = "#30363d"
+    GITHUB_DARK_TEXT = "#c9d1d9"
+    GITHUB_DARK_LINE_NUMBER = "#8b949e"
+
     LANGUAGE_ALIASES = {
         "js": "javascript",
         "jsx": "javascript",
@@ -134,17 +142,16 @@ class CodeBlockFormatter:
         "yml": "yaml",
     }
 
-    TOKEN_COLORS = {
-        "keyword": "#C678DD",
-        "string": "#98C379",
-        "comment": "#7F848E",
-        "number": "#D19A66",
-        "function": "#61AFEF",
-        "operator": "#56B6C2",
-    }
-
     def __init__(self, style_config: Optional[StyleConfig] = None):
         self.style_config = style_config or get_default_style()
+        style_name = getattr(self.style_config, "code_pygments_style", self.DEFAULT_PYGMENTS_STYLE)
+        self.pygments_style = self._load_pygments_style(style_name)
+
+    def _load_pygments_style(self, style_name: str):
+        try:
+            return get_style_by_name(style_name or self.DEFAULT_PYGMENTS_STYLE)
+        except ClassNotFound:
+            return get_style_by_name(self.DEFAULT_PYGMENTS_STYLE)
 
     def format_code_block(self, code: str, language: str = "", show_line_numbers: bool = True) -> str:
         """Format code block with proper indentation and optional line numbers."""
@@ -166,10 +173,19 @@ class CodeBlockFormatter:
         if min_indent == float('inf'):
             min_indent = 0
 
-        # Get colors from config
-        bg_color = self.style_config.code_bg_color
-        border_color = self.style_config.code_border_color
-        text_color = getattr(self.style_config, 'code_text_color', '#212529')
+        style_name = getattr(self.style_config, "code_pygments_style", self.DEFAULT_PYGMENTS_STYLE)
+        if style_name in {"github-dark", "monokai", "native", "material"}:
+            bg_color = self.GITHUB_DARK_BG
+            border_color = self.GITHUB_DARK_BORDER
+            text_color = self.GITHUB_DARK_TEXT
+            header_bg_color = self.GITHUB_DARK_HEADER_BG
+            line_number_color = self.GITHUB_DARK_LINE_NUMBER
+        else:
+            bg_color = self.style_config.code_bg_color
+            border_color = self.style_config.code_border_color
+            text_color = getattr(self.style_config, 'code_text_color', '#212529')
+            header_bg_color = border_color
+            line_number_color = "#868E96"
 
         normalized_lines = []
         for line in lines:
@@ -186,20 +202,22 @@ class CodeBlockFormatter:
 
         if show_line_numbers:
             processed_lines = [
-                f'<span style="color:#868E96;display:inline-block;width:2.5em;text-align:right;margin-right:0.8em;font-size:12px;">{i}</span>{line}'
+                f'<span style="color:{line_number_color};display:inline-block;width:2.5em;text-align:right;margin-right:0.8em;font-size:12px;">{i}</span>{line}'
                 for i, line in enumerate(processed_lines, 1)
             ]
 
-        # Join with newline - use <br> for line breaks since we're using pre
-        code_text = '<br>\n'.join(processed_lines)
+        # Keep real newlines so the code block itself can drive horizontal overflow.
+        code_text = '\n'.join(processed_lines)
 
-        # Outer container with pre tag for better font-size control
-        # Use pre tag with specific styling to prevent WeChat from overriding
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;background:none;border:none !important;">'
-            f'<tr style="border:none !important;"><td style="padding:0;border:none !important;">'
-            f'<pre style="display:block;margin:0;padding:16px;background-color:{bg_color};border:1px solid {border_color};font-family:SF Mono,Monaco,monospace,Consolas,Courier New;font-size:12px;line-height:1;color:{text_color};white-space:pre-wrap;word-wrap:break-word;">{code_text}</pre>'
-            f'</td></tr></table>'
+            f'<div style="margin:16px 0;width:100%;max-width:100%;overflow:hidden;background:none;border:none !important;">'
+            f'<div style="height:30px;display:flex;align-items:center;padding:0 12px;box-sizing:border-box;background-color:{header_bg_color};border:1px solid {border_color};border-bottom:none;border-radius:10px 10px 0 0;">'
+            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#ff5f56;margin-right:8px;"></span>'
+            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#ffbd2e;margin-right:8px;"></span>'
+            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#27c93f;"></span>'
+            f'</div>'
+            f'<pre style="display:block;width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;box-sizing:border-box;margin:0;padding:16px;background-color:{bg_color};border:1px solid {border_color};border-top:none;border-radius:0 0 10px 10px;font-family:SF Mono,Monaco,monospace,Consolas,Courier New;font-size:12px;line-height:1.5;color:{text_color};white-space:pre;word-wrap:normal;overflow-wrap:normal;-webkit-overflow-scrolling:touch;">{code_text}</pre>'
+            f'</div>'
         )
 
     def _highlight_lines(self, code: str, language: str) -> Optional[List[str]]:
@@ -237,18 +255,16 @@ class CodeBlockFormatter:
         return self.LANGUAGE_ALIASES.get(normalized, normalized)
 
     def _get_token_color(self, token_type) -> Optional[str]:
-        if token_type in Token.Comment:
-            return self.TOKEN_COLORS["comment"]
-        if token_type in Token.Keyword:
-            return self.TOKEN_COLORS["keyword"]
-        if token_type in Token.String:
-            return self.TOKEN_COLORS["string"]
-        if token_type in Token.Number:
-            return self.TOKEN_COLORS["number"]
-        if token_type in Token.Name.Function or token_type in Token.Name.Class:
-            return self.TOKEN_COLORS["function"]
-        if token_type in Token.Operator or token_type in Token.Punctuation:
-            return self.TOKEN_COLORS["operator"]
+        current = token_type
+        while current is not None:
+            style = self.pygments_style.style_for_token(current)
+            color = style.get("color")
+            if color:
+                return f"#{color}" if not color.startswith("#") else color
+            parent = getattr(current, "parent", None)
+            if parent == current:
+                break
+            current = parent
         return None
 
     def _render_plain_line(self, line: str) -> str:
@@ -283,7 +299,7 @@ class ImageProcessor:
         # Use table for center alignment (better WeChat editor compatibility)
         # Note: width="100%" on img helps ensure proper sizing in WeChat
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;background:none;border:none !important;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:16px 0;background:none;border:none !important;">'
             f'<tr style="border:none !important;"><td align="center" style="padding:0;border:none !important;">'
             f'<img src="{src}"{alt_attr}{title_attr} width="100%" style="display:block;" />'
             f'</td></tr></table>'
@@ -786,14 +802,14 @@ class MarkdownToWeChatConverter:
                 if is_reference:
                     # Reference section with lighter text
                     html_parts.append(
-                        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{card_bg}" style="background:none;border:none !important;">'
-                        f'<tr style="border:none !important;"><td style="padding:0;border:none !important;font-size:0.85em;color:#888888;">'
+                        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{card_bg}" style="width:100%;max-width:100%;table-layout:fixed;background:none;border:none !important;">'
+                        f'<tr style="border:none !important;"><td style="padding:8px 0;border:none !important;font-size:0.85em;color:#888888;">'
                         f'<div style="padding:0px;border:none !important;">{card_html}</div></td></tr></table>'
                     )
                 else:
                     html_parts.append(
-                        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{card_bg}" style="background:none;border:none !important;">'
-                        f'<tr style="border:none !important;"><td style="padding:0;border:none !important;">'
+                        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{card_bg}" style="width:100%;max-width:100%;table-layout:fixed;background:none;border:none !important;">'
+                        f'<tr style="border:none !important;"><td style="padding:8px 0;border:none !important;">'
                         f'<div style="padding:0px;border:none !important;">{card_html}</div></td></tr></table>'
                     )
         else:
@@ -842,9 +858,9 @@ class MarkdownToWeChatConverter:
         if level == 1:
             # H1: Large centered heading with accent color
             return (
-                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0px;background:none;border:none !important;">'
+                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:0px;background:none;border:none !important;">'
                 f'<tr style="border:none !important;"><td align="center" style="border:none !important;padding:0;">'
-                f'<h1 style="font-size:20px;font-weight:bold;color:{self.style_config.h2_title_text_color};margin:0;padding:0;">'
+                f'<h1 style="font-size:22px;font-weight:bold;color:{self.style_config.h2_title_text_color};margin:0;padding:0;">'
                 f'{text}'
                 f'</h1>'
                 f'</td></tr></table>'
@@ -852,16 +868,16 @@ class MarkdownToWeChatConverter:
         elif level == 2:
             # H2: Use table for WeChat editor compatibility.
             return (
-                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0px;background:none;border:none !important;">'
+                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:0px;background:none;border:none !important;">'
                 f'<tr style="border:none !important;"><td align="center" style="border:none !important;padding:0;">'
-                f'<span style="display:inline-block;margin-bottom:8px;background:none;color:{self.style_config.h2_title_text_color};padding:6px 20px;font-size:16px;font-weight:bold;border-radius:8px;">'
+                f'<span style="display:inline-block;background:none;color:{self.style_config.h2_title_text_color};padding:6px 20px;font-size:18px;font-weight:bold;border-radius:8px;">'
                 f'{text}</span>'
                 f'</td></tr></table>'
             )
         elif level == 3:
             # H3: Use table for left-border style (avoid border-radius)
             return (
-                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{self.style_config.h3_title_bg_color.replace("#", "")}" style="margin:0px;background:none;border:none !important;">'
+                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{self.style_config.h3_title_bg_color.replace("#", "")}" style="width:100%;max-width:100%;table-layout:fixed;margin:0px;background:none;border:none !important;">'
                 f'<tr style="border:none !important;"><td style="border:none !important;padding:0;">'
                 f'<span style="display:block;padding:8px 8px 8px 0px;font-size:{paragraph_font_size};font-weight:bold;color:{self.style_config.h3_title_text_color};">{text}</span>'
                 f'</td></tr></table>'
@@ -872,18 +888,23 @@ class MarkdownToWeChatConverter:
 
     def _convert_paragraph(self, text: str, is_reference: bool = False) -> str:
         """Convert paragraph to HTML with improved styling."""
-        text = self._inline_format(text)
-        # Convert newlines to <br> tags for line breaks within paragraphs
-        text = text.replace('\n', '<br>')
+        segments = [self._inline_format(part) for part in text.split('\n')]
 
         # Get styles from config
         font_size = getattr(self.style_config, 'paragraph_font_size', '16px')
         text_color = getattr(self.style_config, 'paragraph_color', '#333333')
 
-        style = self._paragraph_style(font_size, text_color)
         if is_reference:
-            style = self._paragraph_style('0.85em', '#888888')
-        return f'<p style="{style}">{text}</p>'
+            font_size = '0.85em'
+            text_color = '#888888'
+
+        paragraph_html = []
+        for index, segment in enumerate(segments):
+            margin = "0 0 10px 0" if index < len(segments) - 1 else "0"
+            style = self._paragraph_style(font_size, text_color, margin=margin)
+            paragraph_html.append(f'<p style="{style}">{segment}</p>')
+
+        return ''.join(paragraph_html)
 
     def _paragraph_style(self, font_size: str, text_color: str, margin: str = "16px 0") -> str:
         """Build a minimal paragraph style shared across paragraph-like blocks."""
@@ -897,7 +918,7 @@ class MarkdownToWeChatConverter:
         if not _has_visible_html_content(divider_html):
             return divider_html
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;background:none;border:none !important;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:28px 0;background:none;border:none !important;">'
             f'<tr style="border:none !important;"><td style="padding:0;border:none !important;">'
             f'{divider_html}'
             f'</td></tr>'
@@ -908,13 +929,13 @@ class MarkdownToWeChatConverter:
         """Convert blockquote to HTML using table for WeChat compatibility."""
         text = self._inline_format(text)
         # Use a fixed neutral background and theme accent border for citation-like quotes.
-        bg_color = '#eaeaea'
+        bg_color = '#f0f0f0'
         border_color = getattr(self.style_config, 'h2_title_text_color', '#333333')
         text_color = getattr(self.style_config, 'blockquote_text_color', '#6C757D')
 
         # Use table wrapper for WeChat compatibility, with the visual styling on the inner div.
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;background:none;border:none !important;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:16px 0;background:none;border:none !important;">'
             f'<tr style="border:none !important;"><td style="padding:0;border:none !important;">'
             f'<div style="background-color:{bg_color};padding:10px;border-left:3px solid {border_color} !important;border:none;"><p style="{self._paragraph_style("13px", text_color, margin="0")}">{text}</p></div>'
             f'</td></tr></table>'
@@ -1016,7 +1037,7 @@ class MarkdownToWeChatConverter:
 
         # Inline code: `code`
         # Use a fixed neutral background for inline code across themes.
-        inline_code_bg = '#e5e5e5'
+        inline_code_bg = '#f0f0f0'
         inline_code_color = getattr(self.style_config, 'inline_code_text_color', '#E83E8C')
 
         def code_replace(match):
@@ -1068,7 +1089,7 @@ class MarkdownToWeChatConverter:
 
             if meta_parts:
                 parts.append(
-                    f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px;background:none;border:none !important;">'
+                    f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin-bottom:16px;background:none;border:none !important;">'
                     f'<tr style="border:none !important;"><td style="color:{self.style_config.meta_text_color};font-size:{self.style_config.meta_font_size};padding:0;border:none !important;">'
                     f'{" | ".join(meta_parts)}'
                     f'</td></tr></table>'
@@ -1080,7 +1101,7 @@ class MarkdownToWeChatConverter:
         # Build source footer
         if source:
             parts.append(
-                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;background:none;border:none !important;">'
+                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin-top:24px;background:none;border:none !important;">'
                 f'<tr style="border:none !important;"><td align="center" style="padding:0;border:none !important;">'
                 f'<div style="padding:0px;border:none !important;color:{self.style_config.source_text_color};font-size:{self.style_config.source_font_size};">来源: '
                 f'<a href="{_escape_html(source)}" style="color:{self.style_config.source_text_color};">{_escape_html(source)}</a>'
@@ -1088,8 +1109,12 @@ class MarkdownToWeChatConverter:
                 f'</td></tr></table>'
             )
 
-        # Return content directly without outer table wrapper
-        # WeChat editor may render empty table cells with borders
+        # Wrap the full article in a page-level container so over-wide content
+        # cannot expand the preview/page width.
         full_html = "".join(parts)
 
-        return full_html
+        return (
+            '<div style="width:100%;max-width:100%;overflow-x:hidden;box-sizing:border-box;">'
+            f'{full_html}'
+            '</div>'
+        )
