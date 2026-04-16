@@ -12,7 +12,6 @@ import html
 
 from pygments import lex
 from pygments.lexers import get_lexer_by_name
-from pygments.styles import get_style_by_name
 from pygments.token import Token
 from pygments.util import ClassNotFound
 
@@ -123,13 +122,6 @@ class MarkdownParser:
 class CodeBlockFormatter:
     """Format code blocks for WeChat."""
 
-    DEFAULT_PYGMENTS_STYLE = "material"
-    GITHUB_DARK_BG = "#0d1117"
-    GITHUB_DARK_HEADER_BG = "#161b22"
-    GITHUB_DARK_BORDER = "#30363d"
-    GITHUB_DARK_TEXT = "#c9d1d9"
-    GITHUB_DARK_LINE_NUMBER = "#8b949e"
-
     LANGUAGE_ALIASES = {
         "js": "javascript",
         "jsx": "javascript",
@@ -142,16 +134,17 @@ class CodeBlockFormatter:
         "yml": "yaml",
     }
 
+    TOKEN_COLORS = {
+        "keyword": "#C678DD",
+        "string": "#98C379",
+        "comment": "#7F848E",
+        "number": "#D19A66",
+        "function": "#61AFEF",
+        "operator": "#56B6C2",
+    }
+
     def __init__(self, style_config: Optional[StyleConfig] = None):
         self.style_config = style_config or get_default_style()
-        style_name = getattr(self.style_config, "code_pygments_style", self.DEFAULT_PYGMENTS_STYLE)
-        self.pygments_style = self._load_pygments_style(style_name)
-
-    def _load_pygments_style(self, style_name: str):
-        try:
-            return get_style_by_name(style_name or self.DEFAULT_PYGMENTS_STYLE)
-        except ClassNotFound:
-            return get_style_by_name(self.DEFAULT_PYGMENTS_STYLE)
 
     def format_code_block(self, code: str, language: str = "", show_line_numbers: bool = True) -> str:
         """Format code block with proper indentation and optional line numbers."""
@@ -173,19 +166,10 @@ class CodeBlockFormatter:
         if min_indent == float('inf'):
             min_indent = 0
 
-        style_name = getattr(self.style_config, "code_pygments_style", self.DEFAULT_PYGMENTS_STYLE)
-        if style_name in {"github-dark", "monokai", "native", "material"}:
-            bg_color = self.GITHUB_DARK_BG
-            border_color = self.GITHUB_DARK_BORDER
-            text_color = self.GITHUB_DARK_TEXT
-            header_bg_color = self.GITHUB_DARK_HEADER_BG
-            line_number_color = self.GITHUB_DARK_LINE_NUMBER
-        else:
-            bg_color = self.style_config.code_bg_color
-            border_color = self.style_config.code_border_color
-            text_color = getattr(self.style_config, 'code_text_color', '#212529')
-            header_bg_color = border_color
-            line_number_color = "#868E96"
+        # Get colors from config
+        bg_color = self.style_config.code_bg_color
+        border_color = self.style_config.code_border_color
+        text_color = getattr(self.style_config, 'code_text_color', '#212529')
 
         normalized_lines = []
         for line in lines:
@@ -202,22 +186,17 @@ class CodeBlockFormatter:
 
         if show_line_numbers:
             processed_lines = [
-                f'<span style="color:{line_number_color};display:inline-block;width:2.5em;text-align:right;margin-right:0.8em;font-size:12px;">{i}</span>{line}'
+                f'<span style="color:#868E96;display:inline-block;width:2.5em;text-align:right;margin-right:0.8em;font-size:12px;">{i}</span>{line}'
                 for i, line in enumerate(processed_lines, 1)
             ]
 
-        # Keep real newlines so the code block itself can drive horizontal overflow.
-        code_text = '\n'.join(processed_lines)
+        code_text = '<br>\n'.join(processed_lines)
 
         return (
-            f'<div style="margin:16px 0;width:100%;max-width:100%;overflow:hidden;background:none;border:none !important;">'
-            f'<div style="height:30px;display:flex;align-items:center;padding:0 12px;box-sizing:border-box;background-color:{header_bg_color};border:none;border-radius:10px 10px 0 0;">'
-            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#ff5f56;margin-right:8px;"></span>'
-            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#ffbd2e;margin-right:8px;"></span>'
-            f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:#27c93f;"></span>'
-            f'</div>'
-            f'<pre style="display:block;width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;box-sizing:border-box;margin:0;padding:16px;background-color:{bg_color};border:none;border-radius:0 0 10px 10px;font-family:SF Mono,Monaco,monospace,Consolas,Courier New;font-size:12px;line-height:1.5;color:{text_color};white-space:pre;word-wrap:normal;overflow-wrap:normal;-webkit-overflow-scrolling:touch;">{code_text}</pre>'
-            f'</div>'
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:100%;table-layout:fixed;margin:16px 0;background:none;border:none !important;">'
+            f'<tr style="border:none !important;"><td style="padding:0;border:none !important;">'
+            f'<pre style="display:block;width:100%;overflow:auto;margin:0;padding:16px;background-color:{bg_color};border:1px solid {border_color};font-family:SF Mono,Monaco,monospace,Consolas,Courier New;font-size:12px;line-height:1;color:{text_color};white-space:pre;">{code_text}</pre>'
+            f'</td></tr></table>'
         )
 
     def _highlight_lines(self, code: str, language: str) -> Optional[List[str]]:
@@ -255,16 +234,18 @@ class CodeBlockFormatter:
         return self.LANGUAGE_ALIASES.get(normalized, normalized)
 
     def _get_token_color(self, token_type) -> Optional[str]:
-        current = token_type
-        while current is not None:
-            style = self.pygments_style.style_for_token(current)
-            color = style.get("color")
-            if color:
-                return f"#{color}" if not color.startswith("#") else color
-            parent = getattr(current, "parent", None)
-            if parent == current:
-                break
-            current = parent
+        if token_type in Token.Comment:
+            return self.TOKEN_COLORS["comment"]
+        if token_type in Token.Keyword:
+            return self.TOKEN_COLORS["keyword"]
+        if token_type in Token.String:
+            return self.TOKEN_COLORS["string"]
+        if token_type in Token.Number:
+            return self.TOKEN_COLORS["number"]
+        if token_type in Token.Name.Function or token_type in Token.Name.Class:
+            return self.TOKEN_COLORS["function"]
+        if token_type in Token.Operator or token_type in Token.Punctuation:
+            return self.TOKEN_COLORS["operator"]
         return None
 
     def _render_plain_line(self, line: str) -> str:
@@ -1005,7 +986,7 @@ class MarkdownToWeChatConverter:
                 body_row_index += 1
 
         # Output the native table directly instead of wrapping it in a decorative table.
-        table_content = '<table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:13px;">'
+        table_content = '<table style="width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse;margin:20px 0;font-size:13px;">'
         if header_html:
             table_content += f'<thead>{header_html}</thead>'
         if body_html:
